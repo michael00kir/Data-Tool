@@ -7,6 +7,20 @@
 import Foundation
 import TabularData
 
+enum TableLoadError: Error, LocalizedError {
+    case fileNotFound(path: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .fileNotFound(let path):
+            return "File not found at \(path). Make sure the CSV is in the same folder you are running the app from."
+        }
+    }
+}
+
+var table: DataFrame!
+var currentChartData: DataFrame!
+
 func tableLoad(loadTableName: String) async throws -> DataFrame {
     
     let fileName = "\(loadTableName).csv"
@@ -18,11 +32,11 @@ func tableLoad(loadTableName: String) async throws -> DataFrame {
         print("File found at: \(fileUrl.path)")
         // Proceed to load your data
     } else {
-        fatalError("File not found at \(fileUrl.path). Make sure the CSV is in the same folder you are running the app from.")
+        throw TableLoadError.fileNotFound(path: fileUrl.path)
     }
 
     // creating a dataframe instance of it
-    let table1 = try! DataFrame(contentsOfCSVFile: fileUrl)
+    table = try DataFrame(contentsOfCSVFile: fileUrl)
     
-    return table1
+    return table
 }

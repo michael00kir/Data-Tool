@@ -20,12 +20,10 @@ struct LoadTableTool: Tool {
 
 
   func call(arguments: Arguments) async throws -> String {
-      // Get a random temperature value. Use `WeatherKit` to get
-      // a temperature for the city.
-      let loadedTable = try await tableLoad(loadTableName: arguments.tableName)
-      let columns = loadedTable.columns.map { $0.name }
+      _ = try await tableLoad(loadTableName: arguments.tableName)
+      let columns = table.columns.map { $0.name }
       let formattedResult = """
-          The columns for '\(arguments.tableName)' are '\(columns)'. 
+          Successfully loaded the '\(arguments.tableName)'file. The columns for it, are '\(columns)'.
           """
       return formattedResult
   }

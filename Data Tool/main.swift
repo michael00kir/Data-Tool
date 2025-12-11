@@ -9,12 +9,10 @@ import Foundation
 import FoundationModels
 import TabularData
 
-import Foundation
-
 // 1. Initialize the session once (outside the loop)
-let session = LanguageModelSession(
-    tools: [LoadTableTool()],
-    instructions: "Help the person with getting weather information"
+var session = LanguageModelSession(
+    tools: [LoadTableTool(), SummaryTool(), ChartTool()],
+    instructions: "Help person with Data inqueries."
 )
 
 print("Chart Bot Started. Type 'exit' or 'quit' to end the program.")
@@ -31,14 +29,13 @@ while true {
     }
     
     // 4. Check for exit condition (case insensitive)
-    let cleanedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    if ["exit", "quit"].contains(cleanedInput.lowercased()) {
+    if ["exit", "quit"].contains(input) {
         print("Exiting program. Goodbye!")
         break // Breaks the loop to finish the program
     }
     
     // Skip empty enters to avoid unnecessary API calls
-    if cleanedInput.isEmpty {
+    if input.isEmpty {
         continue
     }
 
@@ -47,10 +44,16 @@ while true {
     // so one error doesn't crash the whole loop.
     do {
         let response = try await session.respond(
-            to: cleanedInput
+            to: input
         )
         print("\nResponse: \(response)")
     } catch {
         print("\nAn error occurred: \(error)")
+        
     }
+    session = LanguageModelSession(
+        tools: [ SummaryTool(), ChartTool()],
+        instructions: "Help person with Data inqueries."
+    )
 }
+
