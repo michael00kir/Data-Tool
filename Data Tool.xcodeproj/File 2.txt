@@ -1,0 +1,202 @@
+# Data Tool — Technical Documentation and Architectural Overview
+
+## 1. Executive Summary
+
+Data Tool is a command-line interface (CLI) application built for macOS that bridges the gap between natural language processing and data visualization. It allows users to manipulate and visualize CSV datasets using conversational English rather than writing code or complex queries.
+
+The application leverages on-device machine learning to interpret user intent, loads data into high-performance data frames, and renders native SwiftUI charts in a separate window, all initiated from a standard terminal environment.
+
+## 2. Core Functionality
+
+The application provides a suite of features designed to make data exploration intuitive:
+
+* **Natural Language Data Loading:** Users can load CSV files into memory by simply describing the file they wish to access (e.g., "Load the sales data"). The app utilizes `TabularData.DataFrame` to handle the ingestion.
+* **Automated Summarization:** Users can request a high-level overview of the dataset. The app analyzes the columns and rows to return a textual summary of the data structure.
+* **Hybrid CLI-GUI Visualization:** While the app runs in the terminal, it is capable of launching a graphical user interface. Users can request charts (Bar, Line, Point, or Area), and the app will generate a SwiftUI window displaying the visualization.
+* **Intelligent Tool Dispatch:** A `LanguageModelSession` acts as the brain of the operation, parsing user input and dynamically selecting the correct tool and parameters to fulfill the request.
+
+## 3. System Architecture and Component Breakdown
+
+The codebase is modular, separating the entry point, tool logic, data processing, and user interface. Below is a detailed breakdown of the files and their specific responsibilities.
+
+### Entry Point and Session Management
+
+**File:** `main.swift`
+
+* **Role:** This file serves as the application bootstrap. It initiates the interactive loop, handles standard input/output, and manages the lifecycle of the AI model.
+* **Key Behaviors:**
+* It initializes the `LanguageModelSession` with a specific set of tools (`LoadTableTool`, `SummaryTool`, `ChartTool`) and system instructions.
+* It captures user input from the command line and forwards it to the session.
+* It prints the model’s textual response to the console.
+* Crucially, it re-initializes the session after every interaction turn. This is a design choice to provide a curated subset of tools to the model, biasing it toward valid subsequent actions and maintaining a clean context.
+
+
+
+### The Tooling Layer
+
+These files define the capabilities exposed to the Large Language Model (LLM).
+
+**File:** `LoadTableTool.swift`
+
+* **Role:** Exposes the CSV loading functionality to the model.
+* **Implementation Details:** It uses `@Generable` and `@Guide` annotations. These are critical for prompt engineering, as they tell the model exactly what arguments (specifically `tableName`) are required.
+* **Outcome:** On a successful call, it returns a confirmation string containing the column names, which helps the model contextually understand the data it just loaded.
+
+**File:** `SummaryTool.swift`
+
+* **Role:** Provides a "sanity check" or overview of the data.
+* **Implementation Details:** It calls the `.summary()` method on the global table object and returns the description. If no table is loaded, it gracefully guides the user to load one first.
+
+**File:** `ChartTool.swift`
+
+* **Role:** The interface for visualization requests.
+* **Implementation Details:** This tool defines the schema for charting. It restricts inputs using Enums for `AggregationType` (sum, average, count, none) and `ChartType` (bar, line, point, area). This constraint ensures the model only attempts to generate valid chart configurations. It delegates the heavy lifting to the `ChartController`.
+
+### Data Logic and Aggregation
+
+**File:** `tableLoad.swift`
+
+* **Role:** Manages the actual file I/O and global data state.
+* **State Management:** It defines the global variables `table` (the currently active dataset) and `currentChartData` (the processed data ready for plotting).
+* **Logic:** It looks for files matching `<tableName>.csv` in the current working directory. It includes error handling to provide human-readable feedback if a file is missing.
+
+**File:** `DataAggregator.swift`
+
+* **Role:** The calculation engine.
+* **Logic:** It implements the math for aggregations (`sum`, `average`, `count`). To ensure stability, it coerces various numeric types into `Double` and converts dates into Strings for reliable grouping.
+* **Output:** It produces a simplified, two-column `DataFrame` (an X-axis column and a Y-axis column) where the keys are sorted lexicographically, making the data ready for UI rendering.
+
+**File:** `ChartController.swift`
+
+* **Role:** The coordinator between the Tooling Layer and the Data Layer.
+* **Smart Lookup:** It implements "fuzzy" column matching. If a user asks for "sales," but the column is named "Sales_Amount," the controller attempts exact, case-insensitive, and partial matches to find the right column.
+* **Workflow:** It calls the `DataAggregator` to process the data, stores the result in `currentChartData`, and then triggers the UI launch on the main thread.
+
+### User Interface and AppKit Integration
+
+**File:** `LaunchChartView.swift`
+
+* **Role:** The visual presentation layer.
+* **SwiftUI & Swift Charts:** It renders the chart using the declarative Swift Charts framework, dynamically switching the mark type (Bar, Line, etc.) based on the user's request.
+* **AppKit Bridge:** Since this is a CLI tool, it does not have a standard window lifecycle. This file uses AppKit to manually create an `NSWindow`, sets the application activation policy to "regular" (so it appears in the Dock and accepts focus), and runs a modal loop. This ensures the terminal execution pauses until the user closes the chart window.
+
+---
+
+## 4. Data and Control Flow
+
+Understanding how data moves through the application is essential for debugging and extension.
+
+1. **Input:** The user types a prompt (e.g., "Plot sales by region") into the terminal via `main.swift`.
+2. **Decision:** The `LanguageModelSession` analyzes the text. It determines that the `ChartTool` is the correct instrument and extracts the parameters (X: "Region", Y: "Sales", Type: Bar/Line).
+3. **Validation & Aggregation:** `ChartTool` passes these parameters to `ChartController`. The controller verifies the column names exist in the global `table`. It then asks `DataAggregator` to group the data by Region and sum the Sales.
+4. **State Update:** The resulting aggregated data is saved to the global variable `currentChartData`.
+5. **Visualization:** `ChartController` invokes `LaunchChartView`. The app switches context from a background CLI process to a foreground GUI application. A window opens displaying the SwiftUI chart.
+6. **Return:** When the user closes the window, the modal loop ends, the app relinquishes focus, and control is returned to the `main.swift` loop, ready for the next command.
+
+---
+
+## 5. Technology Stack and Rationale
+
+* **FoundationModels:** Chosen to provide on-device intelligence. This ensures privacy and eliminates the need for API keys or internet connectivity, though it relies on the local machine's hardware capabilities.
+* **TabularData:** Apple's native framework for data manipulation. It was selected over Python dependencies (like Pandas) to keep the tool pure Swift and highly performant for in-memory operations.
+* **SwiftUI + Swift Charts:** Provides a modern, declarative syntax for visualization. It allows for rapid iteration on UI design and supports dynamic chart types out of the box.
+* **AppKit Interoperability:** Essential for a CLI tool that needs to spawn windows. This layer manages the `NSApplication` lifecycle, allowing a terminal command to behave like a desktop app temporarily.
+
+---
+
+## 6. Deep Dive: Limitations and Trade-offs
+
+This application makes specific engineering trade-offs to balance complexity, performance, and usability.
+
+### FoundationModels Constraints
+
+* **Hardware Dependency:** Because the model runs on-device, performance (latency) and intelligence (quality of output) depend entirely on the user's hardware.
+* **Context Window:** The model has a finite memory. Long conversation histories or extremely complex prompts may be truncated, leading to context loss.
+* **Deterministic Behavior:** Output is probabilistic. The same prompt might yield slightly different tool calls on different runs.
+* **Mitigation Strategy:** The app re-initializes the session frequently and uses strict typing (Enums) for tool parameters to force the model into structured outputs.
+
+### Data Processing Limitations (`TabularData`)
+
+* **Memory Bound:** The app loads the entire CSV into RAM. It cannot handle datasets larger than available memory (no out-of-core processing).
+* **Type Inference:** When loading CSVs, the framework guesses data types. Sometimes, mixed columns are inferred as Strings, preventing mathematical aggregation.
+* **Date Handling:** Dates are currently converted to Strings for grouping. This simplifies the implementation but prevents advanced time-series logic (like "group by month" on a daily dataset).
+
+### Visualization Limitations
+
+* **Aggregated Data Only:** Swift Charts and SwiftUI are performant, but rendering millions of raw data points is not feasible in this architecture. The app is designed to plot aggregated summaries, not raw datasets.
+* **Axis Limitations:** The X-axis defaults to String (categorical) types. This means the chart does not yet support continuous numeric axes or chronological sorting automatically; data is sorted alphabetically by key.
+
+### CLI/GUI Hybrid Constraints
+
+* **macOS Exclusive:** The reliance on AppKit limits this tool to macOS. It cannot run on Linux or Windows.
+* **Modal Blocking:** The specific implementation uses a modal window that blocks the terminal. You cannot type a new command until the chart window is closed.
+* **State Safety:** The use of global variables (`table`, `currentChartData`) makes the app strictly single-user and single-threaded regarding state. It is not thread-safe for concurrent sessions.
+
+---
+
+## 7. Future Roadmap and Improvements
+
+To evolve Data Tool into a production-grade system, the following improvements are recommended:
+
+* **Typed Axes and Sorting:** Implement logic to detect if an X-axis is numeric or date-based. This would allow for continuous plotting (showing gaps in data) and natural sorting (January, February... instead of April, August...).
+* **Smart Sampling:** For large datasets, implement a down-sampling algorithm. This would allow the chart to render a representative visual of large data without crashing the UI.
+* **Concurrency Safety:** Migrate the global variables into a Swift `actor`. This would protect the state in multi-threaded environments and prepare the app for potential multi-session capabilities.
+* **Persistent Application Lifecycle:** Move away from the "command-line first" approach to a "stay resident" approach. This would allow the window to remain open while the user continues to type commands in the terminal.
+* **Streaming Feedback:** Implement token streaming from the model. Instead of waiting for the full response, the user would see the text appearing in real-time, improving the perceived latency.
+* **Advanced Schema Detection:** Improve the CSV loader to better handle dates and numbers, perhaps by allowing the user to specify column types in the prompt (e.g., "Load sales.csv treating Date as logical dates").
+
+---
+
+## 8. Error Handling and Concurrency
+
+### Error Handling Strategy
+
+The application prioritizes clear, actionable feedback over silent failures.
+
+* **File Handling:** If a file is missing, the error message explicitly states the path the app attempted to read.
+* **Column Resolution:** If a column is misspelled, the `ChartController` catches the error and provides a list of valid column names available in the table.
+* **Aggregation:** If a mathematical operation results in empty data (e.g., trying to sum text), the app prevents the chart from launching and alerts the user.
+
+### Concurrency Model
+
+* **Asynchronous Tools:** All tools conform to `async` protocols, allowing the UI thread to remain responsive while the model thinks or data loads.
+* **Main Actor Isolation:** All UI work (opening windows, rendering charts) is explicitly dispatched to the `@MainActor`. This is a hard requirement of macOS UI development.
+* **State Management:** Currently, state is managed via global variables. While simple, this is the primary bottleneck for future concurrency features.
+
+---
+
+## 9. User Guide
+
+### How to Run
+
+1. **Prerequisites:** Ensure you are on a macOS device with Xcode installed.
+2. **Setup:** Open the project in Xcode.
+3. **Data Preparation:** Place your target CSV files (e.g., `sales.csv`) in the same directory where the executable runs. (When running from Xcode, this can be tricky; it is often easier to build the binary and run it from Terminal in the folder containing your data).
+4. **Execution:** Run the app. You will be greeted by a command prompt.
+5. **Interaction:** Type natural language commands.
+6. **Visualization:** If a chart launches, view it, then close the window to resume typing commands.
+
+### Example Prompts
+
+Use these examples to explore the capabilities of the tool:
+
+* *"Load the table named sales."* (Loads `sales.csv`)
+* *"Summarize the dataset."* (Prints column names and types)
+* *"Plot the sum of Revenue by Year as a bar chart."* (Aggregates revenue and displays a bar graph)
+* *"Show the average Price by Category as a line chart."* (Calculates averages and displays a trend line)
+* *"Count Orders by Region as a point chart."* (Tallies rows per region and displays a scatter plot)
+
+---
+
+## 10. Troubleshooting
+
+* **Issue:** "File not found" error.
+* **Fix:** Verify that the file name matches your prompt exactly (excluding the .csv extension in the prompt) and that the file is physically located in the current working directory of the terminal shell.
+
+
+* **Issue:** "Column not found" error.
+* **Fix:** The model might have hallucinated a column name. Check the output of the "Summarize" command to see the actual column headers.
+
+
+* **Issue:** Chart window does not appear.
+* **Fix:** This usually happens if the app is run in a headless environment (like SSH) or if the activation policy failed. Ensure you are running this within a standard macOS GUI session.

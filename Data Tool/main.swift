@@ -10,10 +10,12 @@ import FoundationModels
 import TabularData
 
 // 1. Initialize the session once (outside the loop)
+let options = GenerationOptions(sampling: .greedy)
 var session = LanguageModelSession(
     tools: [LoadTableTool(), SummaryTool(), ChartTool()],
     instructions: "Help person with Data inqueries."
 )
+session.prewarm()
 
 print("Chart Bot Started. Type 'exit' or 'quit' to end the program.")
 print("------------------------------------------------------------")
@@ -44,7 +46,8 @@ while true {
     // so one error doesn't crash the whole loop.
     do {
         let response = try await session.respond(
-            to: input
+            to: input,
+            options: options
         )
         print("\nResponse: \(response)")
     } catch {
@@ -54,6 +57,8 @@ while true {
     session = LanguageModelSession(
         tools: [ SummaryTool(), ChartTool()],
         instructions: "Help person with Data inqueries."
+        
     )
+    session.prewarm()
 }
 
